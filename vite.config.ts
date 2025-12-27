@@ -10,6 +10,18 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [react()],
+      base: '/', // Importante para produção
+      build: {
+        outDir: 'dist',
+        assetsDir: 'assets',
+        emptyOutDir: true,
+        sourcemap: false,
+        rollupOptions: {
+          output: {
+            manualChunks: undefined
+          }
+        }
+      },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
