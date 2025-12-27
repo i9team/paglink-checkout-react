@@ -26,7 +26,20 @@ import {
   Coins
 } from 'lucide-react';
 import { CheckoutData, OrderBump, Coupon, ReviewsData, ReviewItem, PaymentMethod, Product, ServiceConfig, PriceTier } from './types';
-import { COUNTRIES } from './constants';
+
+// Tipo para o país da API
+interface Country {
+  pais: string;
+  nome_oficial: string;
+  country_code: string;
+  country_code_3: string;
+  img: string;
+  ddi: string;
+  continente: string;
+  capital: string;
+  moeda: string;
+  idioma: string;
+}
 
 declare global {
   interface Window {
@@ -57,12 +70,17 @@ const getSlugFromUrl = (): string => {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://paglink.net/api/checkout';
 const CHECKOUT_SLUG = getSlugFromUrl();
 const API_URL = `${API_BASE_URL}/${CHECKOUT_SLUG}`;
+const FLAGS_API_URL = 'https://paglink.net/public/assets/json/flags-ddis.json';
 
 const App: React.FC = () => {
   const [data, setData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  
+  // Estado para países/DDIs
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [loadingCountries, setLoadingCountries] = useState(true);
   
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [productQuantity, setProductQuantity] = useState<number>(1);
@@ -130,6 +148,48 @@ const App: React.FC = () => {
     
     return matchedTier ? parseFloat(matchedTier.price) : basePrice;
   };
+
+  // Fetch Countries/DDIs from API
+  useEffect(() => {
+    const fetchCountries = async () => {
+      try {
+        setLoadingCountries(true);
+        console.log('🌍 Fetching countries from:', FLAGS_API_URL);
+        const response = await fetch(FLAGS_API_URL);
+        const json = await response.json();
+        
+        // Converter objeto em array
+        const countriesArray = Object.values(json) as Country[];
+        
+        // Ordenar por nome do país
+        const sortedCountries = countriesArray.sort((a, b) => 
+          a.pais.localeCompare(b.pais, 'pt-BR')
+        );
+        
+        setCountries(sortedCountries);
+        console.log('✅ Countries loaded:', sortedCountries.length);
+      } catch (err) {
+        console.error('❌ Failed to load countries:', err);
+        // Fallback para Brasil caso falhe
+        setCountries([{
+          pais: 'Brasil',
+          nome_oficial: 'República Federativa do Brasil',
+          country_code: 'BR',
+          country_code_3: 'BRA',
+          img: 'https://flagcdn.com/w40/br.png',
+          ddi: '+55',
+          continente: 'South America',
+          capital: 'Brasília',
+          moeda: 'BRL',
+          idioma: 'Português'
+        }]);
+      } finally {
+        setLoadingCountries(false);
+      }
+    };
+
+    fetchCountries();
+  }, []);
 
   // Fetch Data from API
   useEffect(() => {
@@ -200,6 +260,14 @@ const App: React.FC = () => {
     script.async = true;
     script.onload = () => setSdkLoaded(prev => ({ ...prev, [id]: true }));
     document.head.appendChild(script);
+  };
+
+  // Helper para obter URL da bandeira
+  const getFlagUrl = (img: string) => {
+    if (!img) return '';
+    if (img.startsWith('http')) return img;
+    // Converter caminho relativo para absoluto
+    return img.replace('./public/', 'https://paglink.net/public/');
   };
 
   // Parsing Timer
@@ -366,7 +434,10 @@ const App: React.FC = () => {
     if (errors.card_cvc) setErrors(prev => ({ ...prev, card_cvc: '' }));
   };
 
-  const selectedCountry = useMemo(() => COUNTRIES.find(c => c.code === form.ddi) || COUNTRIES[0], [form.ddi]);
+  const selectedCountry = useMemo(() => 
+    countries.find(c => c.ddi === form.ddi) || countries[0], 
+    [form.ddi, countries]
+  );
 
   const selectedProduct = useMemo(() => {
     if (!data) return null;
@@ -564,7 +635,6 @@ const App: React.FC = () => {
     setProcessing(true);
 
     try {
-      // Preparar dados do cliente
       const customerData = {
         name: form.name,
         email: form.email,
@@ -573,10 +643,8 @@ const App: React.FC = () => {
         phone: form.phone.replace(/\D/g, '')
       };
 
-      // Preparar itens do pedido
       const items = [];
 
-      // Produto principal
       items.push({
         id: selectedProduct.id,
         name: selectedProduct.product_name,
@@ -585,7 +653,6 @@ const App: React.FC = () => {
         type: 'product'
       });
 
-      // Order bumps selecionados
       Object.entries(selectedBumps).forEach(([bumpId, quantity]) => {
         const bump = data.orderbumps.find(b => b.id === Number(bumpId));
         if (bump) {
@@ -599,7 +666,6 @@ const App: React.FC = () => {
         }
       });
 
-      // Obter payment method completo
       const selectedPaymentMethod = data.payment_methods.find(
         p => p.payment_methods === paymentMethod
       );
@@ -608,7 +674,6 @@ const App: React.FC = () => {
         throw new Error('Método de pagamento não encontrado');
       }
 
-      // Montar objeto de pedido
       const orderData: any = {
         customer: customerData,
         items: items,
@@ -618,7 +683,6 @@ const App: React.FC = () => {
         payment_method_id: selectedPaymentMethod.id
       };
 
-      // Se for cartão de crédito, adicionar dados do cartão
       if (paymentMethod === 'credit_card') {
         orderData.card = {
           number: cardForm.number.replace(/\s/g, ''),
@@ -632,21 +696,16 @@ const App: React.FC = () => {
 
       console.log('🚀 Finalizing order:', orderData);
 
-      // Enviar para API
       const response = await sendToPaymentAPI(orderData);
 
       console.log('✅ Payment processed:', response);
 
-      // Tratar resposta baseado no tipo de pagamento
       if (response.data) {
         if (paymentMethod === 'pix' && response.data.pix_code) {
-          // Redirecionar para página de PIX ou mostrar QR Code
           alert(`PIX gerado com sucesso! Código: ${response.data.pix_code}`);
         } else if (paymentMethod === 'boleto' && response.data.boleto_url) {
-          // Redirecionar para boleto
           window.open(response.data.boleto_url, '_blank');
         } else if (paymentMethod === 'credit_card') {
-          // Redirecionar para página de sucesso
           if (response.data.redirect_url) {
             window.location.href = response.data.redirect_url;
           } else {
@@ -670,11 +729,13 @@ const App: React.FC = () => {
     </div>
   ) : null;
 
-  if (loading) {
+  if (loading || loadingCountries) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
         <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
-        <p className="text-sm font-bold text-gray-400 uppercase tracking-widest animate-pulse">Carregando Checkout Seguro...</p>
+        <p className="text-sm font-bold text-gray-400 uppercase tracking-widest animate-pulse">
+          {loadingCountries ? 'Carregando países...' : 'Carregando Checkout Seguro...'}
+        </p>
       </div>
     );
   }
@@ -762,32 +823,51 @@ const App: React.FC = () => {
               <input name="cpf" type="tel" placeholder="000.000.000-00" className={`w-full h-14 bg-gray-50 border rounded-2xl px-5 font-bold text-gray-700 focus:bg-white transition-all outline-none text-base ${errors.cpf ? 'border-red-500' : 'border-gray-100'}`} value={form.cpf} onChange={handleDocumentChange} />
               <ErrorMsg name="cpf" />
             </div>
+            {/* Na seção do DDI, substitua o código do dropdown por: */}
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">WhatsApp</label>
               <div className="grid grid-cols-[90px_1fr] gap-2 w-full">
                 <div className="relative min-w-0" ref={ddiRef}>
                   <button type="button" onClick={() => setIsDdiOpen(!isDdiOpen)} className="flex items-center justify-center gap-1.5 h-14 w-full bg-gray-50 border border-gray-100 rounded-2xl px-2 font-bold text-[13px] hover:bg-white transition-all outline-none overflow-hidden shrink-0">
-                    <img src={selectedCountry.flag} className="w-5 h-3.5 object-cover rounded-sm shrink-0 shadow-sm" alt="" />
-                    <span className="shrink-0">{selectedCountry.code}</span>
+                    {selectedCountry && (
+                      <>
+                        <img src={getFlagUrl(selectedCountry.img)} className="w-5 h-3.5 object-cover rounded-sm shrink-0 shadow-sm" alt={selectedCountry.pais} />
+                        <span className="shrink-0">{selectedCountry.ddi}</span>
+                      </>
+                    )}
                     <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform shrink-0 ${isDdiOpen ? 'rotate-180' : ''}`} />
                   </button>
                   {isDdiOpen && (
                     <div className="absolute top-16 left-0 w-[240px] bg-white border border-gray-100 rounded-2xl shadow-2xl z-[150] max-h-[280px] overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
-                      {COUNTRIES.map(country => (
-                        <div key={country.code} onClick={() => { setForm({ ...form, ddi: country.code, phone: '' }); setIsDdiOpen(false); }} className={`flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors ${form.ddi === country.code ? 'bg-primary/5' : ''}`}>
-                          <img src={country.flag} className="w-6 h-4 object-cover rounded-sm shadow-sm shrink-0" alt="" />
+                      {countries.map((country) => (
+                        <div 
+                          key={country.country_code} 
+                          onClick={() => { 
+                            setForm({ ...form, ddi: country.ddi, phone: '' }); 
+                            setIsDdiOpen(false); 
+                          }} 
+                          className={`flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors ${form.ddi === country.ddi ? 'bg-primary/5' : ''}`}
+                        >
+                          <img src={getFlagUrl(country.img)} className="w-6 h-4 object-cover rounded-sm shadow-sm shrink-0" alt={country.pais} />
                           <div className="flex-1 overflow-hidden">
-                            <p className="text-[11px] font-bold text-gray-800 truncate">{country.name}</p>
-                            <p className="text-[10px] text-gray-400 font-black">{country.code}</p>
+                            <p className="text-[11px] font-bold text-gray-800 truncate">{country.pais}</p>
+                            <p className="text-[10px] text-gray-400 font-black">{country.ddi}</p>
                           </div>
-                          {form.ddi === country.code && <Check className="w-4 h-4 text-primary shrink-0" />}
+                          {form.ddi === country.ddi && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
                 <div className="min-w-0">
-                  <input name="phone" type="tel" placeholder={form.ddi === '+55' ? '(00) 00000-0000' : 'Telefone'} className={`w-full h-14 bg-gray-50 border rounded-2xl px-5 font-bold text-gray-700 focus:bg-white transition-all outline-none text-base ${errors.phone ? 'border-red-500' : 'border-gray-100'}`} value={form.phone} onChange={handlePhoneChange} />
+                  <input 
+                    name="phone" 
+                    type="tel" 
+                    placeholder={form.ddi === '+55' ? '(00) 00000-0000' : 'Telefone'} 
+                    className={`w-full h-14 bg-gray-50 border rounded-2xl px-5 font-bold text-gray-700 focus:bg-white transition-all outline-none text-base ${errors.phone ? 'border-red-500' : 'border-gray-100'}`} 
+                    value={form.phone} 
+                    onChange={handlePhoneChange} 
+                  />
                 </div>
               </div>
               <ErrorMsg name="phone" />
@@ -1065,16 +1145,25 @@ const App: React.FC = () => {
               </div>
 
               {/* Selected Order Bumps */}
-              {Object.entries(selectedBumps).map(([id, qty]) => {
-                const bump = data.orderbumps.find(b => b.id === Number(id));
-                if (!bump) return null;
-                return (
-                  <div key={id} className="flex justify-between text-[11px] font-black text-gray-500 uppercase animate-in fade-in slide-in-from-left-2 duration-300">
-                    <span className="truncate pr-4 flex-1">+ {bump.product_name} {qty > 1 ? `x${qty}` : ''}</span>
-                    <span className="tabular-nums shrink-0">R$ {formatCurrency(parseFloat(bump.final_price) * qty)}</span>
-                  </div>
-                );
-              })}
+              {Object.entries(selectedBumps as Record<string, number>).map(([id, qty]) => {
+              const bump = data.orderbumps.find(b => b.id === Number(id));
+              if (!bump) return null;
+
+              return (
+                <div
+                  key={id}
+                  className="flex justify-between text-[11px] font-black text-gray-500 uppercase animate-in fade-in slide-in-from-left-2 duration-300"
+                >
+                  <span className="truncate pr-4 flex-1">
+                    + {bump.product_name} {qty > 1 ? `x${qty}` : ''}
+                  </span>
+
+                  <span className="tabular-nums shrink-0">
+                    R$ {formatCurrency(Number(bump.final_price) * qty)}
+                  </span>
+                </div>
+              );
+            })}
             </div>
 
             {totals.discount > 0 && (
