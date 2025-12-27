@@ -152,44 +152,87 @@ const App: React.FC = () => {
   // Fetch Countries/DDIs from API
   useEffect(() => {
     const fetchCountries = async () => {
-      try {
-        setLoadingCountries(true);
-        console.log('🌍 Fetching countries from:', FLAGS_API_URL);
-        const response = await fetch(FLAGS_API_URL);
-        const json = await response.json();
-        
-        // Converter objeto em array
-        const countriesArray = Object.values(json) as Country[];
-        
-        // Ordenar por nome do país
-        const sortedCountries = countriesArray.sort((a, b) => 
-          a.pais.localeCompare(b.pais, 'pt-BR')
-        );
-        
-        setCountries(sortedCountries);
-        console.log('✅ Countries loaded:', sortedCountries.length);
-      } catch (err) {
-        console.error('❌ Failed to load countries:', err);
-        // Fallback para Brasil caso falhe
-        setCountries([{
-          pais: 'Brasil',
-          nome_oficial: 'República Federativa do Brasil',
-          country_code: 'BR',
-          country_code_3: 'BRA',
-          img: 'https://flagcdn.com/w40/br.png',
-          ddi: '+55',
-          continente: 'South America',
-          capital: 'Brasília',
-          moeda: 'BRL',
-          idioma: 'Português'
-        }]);
-      } finally {
-        setLoadingCountries(false);
-      }
-    };
+    try {
+      setLoadingCountries(true);
+      console.log('🌍 Fetching countries from:', FLAGS_API_URL);
+      const response = await fetch(FLAGS_API_URL);
+      const json = await response.json();
+      
+      // Converter objeto em array
+      const countriesArray = Object.values(json) as Country[];
+      
+      // Lista de países mais populares (em ordem de prioridade)
+      const popularCountries = [
+        'BR', // Brasil sempre primeiro
+        'US', // Estados Unidos
+        'PT', // Portugal
+        'AR', // Argentina
+        'MX', // México
+        'ES', // Espanha
+        'CL', // Chile
+        'CO', // Colômbia
+        'PE', // Peru
+        'GB', // Reino Unido
+        'IT', // Itália
+        'FR', // França
+        'DE', // Alemanha
+        'CA', // Canadá
+        'UY', // Uruguai
+        'PY', // Paraguai
+        'BO', // Bolívia
+        'VE', // Venezuela
+      ];
+      
+      // Separar países populares dos demais
+      const popular: Country[] = [];
+      const others: Country[] = [];
+      
+      countriesArray.forEach(country => {
+        if (popularCountries.includes(country.country_code)) {
+          popular.push(country);
+        } else {
+          others.push(country);
+        }
+      });
+      
+      // Ordenar países populares pela ordem definida
+      popular.sort((a, b) => {
+        const indexA = popularCountries.indexOf(a.country_code);
+        const indexB = popularCountries.indexOf(b.country_code);
+        return indexA - indexB;
+      });
+      
+      // Ordenar os demais países alfabeticamente
+      others.sort((a, b) => a.pais.localeCompare(b.pais, 'pt-BR'));
+      
+      // Combinar: populares primeiro, depois o resto
+      const sortedCountries = [...popular, ...others];
+      
+      setCountries(sortedCountries);
+      console.log('✅ Countries loaded:', sortedCountries.length);
+      console.log('🇧🇷 First country:', sortedCountries[0]?.pais);
+    } catch (err) {
+      console.error('❌ Failed to load countries:', err);
+      // Fallback para Brasil caso falhe
+      setCountries([{
+        pais: 'Brasil',
+        nome_oficial: 'República Federativa do Brasil',
+        country_code: 'BR',
+        country_code_3: 'BRA',
+        img: 'https://flagcdn.com/w40/br.png',
+        ddi: '+55',
+        continente: 'South America',
+        capital: 'Brasília',
+        moeda: 'BRL',
+        idioma: 'Português'
+      }]);
+    } finally {
+      setLoadingCountries(false);
+    }
+  };
 
-    fetchCountries();
-  }, []);
+  fetchCountries();
+}, []);
 
   // Fetch Data from API
   useEffect(() => {
