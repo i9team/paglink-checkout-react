@@ -50,7 +50,7 @@ const PixIcon = ({ className }: { className?: string }) => (
 const getSlugFromUrl = (): string => {
   const path = window.location.pathname;
   const segments = path.split('/').filter(Boolean);
-  return segments[segments.length - 1] || 'HubTV'; // Fallback para 'HubTV' se não encontrar slug
+  return segments[segments.length - 1] || 'HubTV';
 };
 
 // Construir API URL dinamicamente
@@ -62,6 +62,7 @@ const App: React.FC = () => {
   const [data, setData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [processing, setProcessing] = useState(false);
   
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [productQuantity, setProductQuantity] = useState<number>(1);
@@ -125,7 +126,6 @@ const App: React.FC = () => {
     const basePrice = parseFloat(config.credit_base_price || product.final_price);
     const tiers = (config.price_tiers as PriceTier[]) || [];
     
-    // Find the matching tier
     const matchedTier = tiers.find(tier => quantity >= tier.from && (tier.to === 0 || quantity <= tier.to));
     
     return matchedTier ? parseFloat(matchedTier.price) : basePrice;
@@ -143,7 +143,6 @@ const App: React.FC = () => {
         if (json.success && json.data) {
           console.log('✅ Data loaded successfully:', json.data);
           setData(json.data);
-          // Initialize defaults
           if (json.data.products && json.data.products.length > 0) {
             const firstProduct = json.data.products[0];
             setSelectedProductId(firstProduct.id);
@@ -524,13 +523,143 @@ const App: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleFinalize = () => {
-    if (validate()) {
-      alert('Pedido enviado com sucesso!');
-    } else {
+  const sendToPaymentAPI = async (orderData: any) => {
+    try {
+      const processUrl = `https://paglink.net/${CHECKOUT_SLUG}/process`;
+      console.log('📤 Sending order to:', processUrl);
+      console.log('📦 Order data:', orderData);
+
+      const response = await fetch(processUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(orderData)
+      });
+
+      const result = await response.json();
+      console.log('📥 Response:', result);
+
+      if (!result.success) {
+        throw new Error(result.message || 'Erro no processamento do pagamento');
+      }
+
+      return result;
+    } catch (err: any) {
+      console.error('❌ Payment API error:', err);
+      throw err;
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!validate()) {
       const firstError = Object.keys(errors)[0];
       const el = document.getElementsByName(firstError)[0];
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    if (!data || !selectedProduct) return;
+
+    setProcessing(true);
+
+    try {
+      // Preparar dados do cliente
+      const customerData = {
+        name: form.name,
+        email: form.email,
+        cpf: form.cpf.replace(/\D/g, ''),
+        ddi: form.ddi,
+        phone: form.phone.replace(/\D/g, '')
+      };
+
+      // Preparar itens do pedido
+      const items = [];
+
+      // Produto principal
+      items.push({
+        id: selectedProduct.id,
+        name: selectedProduct.product_name,
+        price: currentUnitPrice,
+        quantity: productQuantity,
+        type: 'product'
+      });
+
+      // Order bumps selecionados
+      Object.entries(selectedBumps).forEach(([bumpId, quantity]) => {
+        const bump = data.orderbumps.find(b => b.id === Number(bumpId));
+        if (bump) {
+          items.push({
+            id: bump.id,
+            name: bump.product_name,
+            price: parseFloat(bump.final_price),
+            quantity: quantity,
+            type: 'orderbump'
+          });
+        }
+      });
+
+      // Obter payment method completo
+      const selectedPaymentMethod = data.payment_methods.find(
+        p => p.payment_methods === paymentMethod
+      );
+
+      if (!selectedPaymentMethod) {
+        throw new Error('Método de pagamento não encontrado');
+      }
+
+      // Montar objeto de pedido
+      const orderData: any = {
+        customer: customerData,
+        items: items,
+        total: totals.total,
+        coupon: activeCoupon ? activeCoupon.code : null,
+        payment_method: selectedPaymentMethod.payment_methods,
+        payment_method_id: selectedPaymentMethod.id
+      };
+
+      // Se for cartão de crédito, adicionar dados do cartão
+      if (paymentMethod === 'credit_card') {
+        orderData.card = {
+          number: cardForm.number.replace(/\s/g, ''),
+          holder_name: cardForm.name,
+          expiry_month: cardForm.expiry.split('/')[0],
+          expiry_year: '20' + cardForm.expiry.split('/')[1],
+          cvv: cardForm.cvc,
+          installments: parseInt(cardForm.installments)
+        };
+      }
+
+      console.log('🚀 Finalizing order:', orderData);
+
+      // Enviar para API
+      const response = await sendToPaymentAPI(orderData);
+
+      console.log('✅ Payment processed:', response);
+
+      // Tratar resposta baseado no tipo de pagamento
+      if (response.data) {
+        if (paymentMethod === 'pix' && response.data.pix_code) {
+          // Redirecionar para página de PIX ou mostrar QR Code
+          alert(`PIX gerado com sucesso! Código: ${response.data.pix_code}`);
+        } else if (paymentMethod === 'boleto' && response.data.boleto_url) {
+          // Redirecionar para boleto
+          window.open(response.data.boleto_url, '_blank');
+        } else if (paymentMethod === 'credit_card') {
+          // Redirecionar para página de sucesso
+          if (response.data.redirect_url) {
+            window.location.href = response.data.redirect_url;
+          } else {
+            alert('Pagamento aprovado com sucesso!');
+          }
+        }
+      }
+
+    } catch (err: any) {
+      console.error('❌ Finalize error:', err);
+      alert(err.message || 'Erro ao processar pagamento. Tente novamente.');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -1039,9 +1168,25 @@ const App: React.FC = () => {
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5 opacity-80">Total a pagar</span>
               <span className="text-2xl font-black text-gray-900 tabular-nums leading-none tracking-tighter">R$ {formatCurrency(totals.total)}</span>
             </div>
-            <button onClick={handleFinalize} className="flex-1 group relative overflow-hidden flex items-center justify-center gap-2 h-14 rounded-2xl text-white font-black text-base shadow-2xl shadow-primary/40 border-b-4 border-black/10 active:translate-y-1 transition-all" style={{ background: `linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%)` }}>
-              <span className="relative z-10 flex items-center gap-1 uppercase tracking-tight">FINALIZAR AGORA <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></span>
-              <div className="absolute inset-0 bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out skew-x-12"></div>
+            <button 
+              onClick={handleFinalize} 
+              disabled={processing}
+              className="flex-1 group relative overflow-hidden flex items-center justify-center gap-2 h-14 rounded-2xl text-white font-black text-base shadow-2xl shadow-primary/40 border-b-4 border-black/10 active:translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
+              style={{ background: `linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%)` }}
+            >
+              {processing ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="uppercase tracking-tight">Processando...</span>
+                </div>
+              ) : (
+                <>
+                  <span className="relative z-10 flex items-center gap-1 uppercase tracking-tight">
+                    FINALIZAR AGORA <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  </span>
+                  <div className="absolute inset-0 bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out skew-x-12"></div>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -1064,7 +1209,6 @@ const App: React.FC = () => {
         html, body { width: 100%; margin: 0; padding: 0; overflow-x: hidden; }
         input:focus, select:focus { outline: none !important; border-color: var(--primary-color) !important; box-shadow: 0 0 0 3px rgba(var(--primary-color), 0.1) !important; }
         
-        /* Premium Ticket Style with Zigzag Edge */
         .ticket-summary {
           border-radius: 1.5rem 1.5rem 0 0;
           -webkit-mask: 
@@ -1075,7 +1219,6 @@ const App: React.FC = () => {
             linear-gradient(#000 0 0) 0 0 / 100% calc(100% - 10px) no-repeat;
         }
 
-        /* Custom range slider styling */
         input[type=range]::-webkit-slider-thumb {
           -webkit-appearance: none;
           height: 24px;
