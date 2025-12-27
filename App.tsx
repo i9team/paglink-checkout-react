@@ -929,18 +929,47 @@ const App: React.FC = () => {
               const serviceConfig = parseServiceConfig(product.service_config);
               const isCredits = serviceConfig?.mode === 'credits';
               const isSelected = selectedProductId === product.id;
+              
+              // Calcular desconto
+              const originalPrice = parseFloat(product.price);
+              const finalPrice = isCredits ? getUnitPrice(product, productQuantity) : parseFloat(product.final_price);
+              const hasDiscount = originalPrice > finalPrice;
+              const discountPercentage = hasDiscount 
+                ? Math.round(((originalPrice - finalPrice) / originalPrice) * 100)
+                : 0;
 
               return (
                 <div key={product.id} onClick={() => handleProductSelection(product)} className={`flex flex-col p-4 rounded-2xl border-2 transition-all cursor-pointer ${isSelected ? 'border-primary bg-primary/5 shadow-sm' : 'border-gray-50 bg-gray-50'}`}>
                   <div className="flex items-center">
-                    <div className="w-12 h-12 rounded-xl bg-white border border-gray-100 overflow-hidden mr-4 shadow-sm shrink-0">
+                    <div className="w-12 h-12 rounded-xl bg-white border border-gray-100 overflow-hidden mr-4 shadow-sm shrink-0 relative">
                       <img src={getImageUrl(product.image, 'product')} className="w-full h-full object-cover" alt="" />
+                      {hasDiscount && (
+                        <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full shadow-lg">
+                          -{discountPercentage}%
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 overflow-hidden text-left">
                       <h3 className="font-bold text-sm text-gray-800 leading-tight truncate">{product.product_name}</h3>
-                      <p className="text-lg font-black text-gray-900 mt-1">
-                        {isCredits ? `R$ ${formatCurrency(getUnitPrice(product, productQuantity))}/crédito` : `R$ ${formatCurrency(product.final_price)}`}
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {hasDiscount && (
+                          <span className="text-xs font-bold text-gray-400 line-through">
+                            R$ {formatCurrency(originalPrice)}
+                          </span>
+                        )}
+                        <p className="text-lg font-black text-gray-900">
+                          {isCredits ? `R$ ${formatCurrency(finalPrice)}/crédito` : `R$ ${formatCurrency(finalPrice)}`}
+                        </p>
+                      </div>
+                      {hasDiscount && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <div className="bg-green-50 text-green-600 px-2 py-0.5 rounded-md">
+                            <span className="text-[9px] font-black uppercase tracking-wide">
+                              Economize {discountPercentage}%
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'bg-primary border-primary scale-110' : 'bg-white border-gray-200'}`}>
                       {isSelected && <Check className="w-4 h-4 text-white" />}
@@ -955,7 +984,7 @@ const App: React.FC = () => {
                             <Coins className="w-3.5 h-3.5" /> Quantidade de Créditos
                           </label>
                           <div className="flex items-center gap-1.5">
-                             <span className="bg-primary/10 text-primary px-3 py-1 rounded-full text-[11px] font-black tabular-nums">{productQuantity}</span>
+                            <span className="bg-primary/10 text-primary px-3 py-1 rounded-full text-[11px] font-black tabular-nums">{productQuantity}</span>
                           </div>
                         </div>
                         <input 
